@@ -4,19 +4,18 @@ on:
   workflow_call:
     inputs:
       databricks_host:
-        description: "URL del workspace de Databricks"
         required: true
         type: string
-    secrets:
-      DATABRICKS_TOKEN:
+      databricks_token:            # ⬅️ NUEVO
         required: true
+        type: string
 
 jobs:
   verify:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_TOKEN: ${{ inputs.databricks_token }}   # ⬅️ usar input
     steps:
       - name: Validar conexión a Databricks
         shell: bash
@@ -25,10 +24,9 @@ jobs:
         run: |
           source ~/databricks-env/bin/activate || true
           set -Eeuo pipefail
-          # Guardas: falla si el token está vacío
           [ -n "$DATABRICKS_TOKEN" ] || { echo "❌ DATABRICKS_TOKEN vacío"; exit 1; }
           echo "::add-mask::${DATABRICKS_TOKEN}"
-
           databricks --version
           databricks workspace ls / >/dev/null
           echo "✅ Conexión a Databricks verificada"
+
