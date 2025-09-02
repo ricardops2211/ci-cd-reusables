@@ -7,25 +7,36 @@ on:
         description: "URL del workspace de Databricks"
         required: true
         type: string
+      databricks_token:
+        description: "Databricks PAT (pasado como input)"
+        required: false
+        type: string
     secrets:
       DATABRICKS_TOKEN:
-        required: true
+        required: false
 
 jobs:
   verify:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      # Usa el input si viene; si no, usa el secret (fallback)
+      DATABRICKS_TOKEN: ${{ inputs.databricks_token || secrets.DATABRICKS_TOKEN }}
     steps:
+      # (opcional) mascara el token por si acaso
+      - name: Mask token
+        shell: bash
+        run: echo "::add-mask::${DATABRICKS_TOKEN}"
+
       # 🔹 3) Sanity check de conexión
       - name: Validar conexión a Databricks
         shell: bash
         env:
           PATH: ${{ env.PATH }}:~/databricks-env/bin
         run: |
-          source ~/databricks-env/bin/activate
+          source ~/databricks-env/bin/activate || true
           set -Eeuo pipefail
           databricks --version
           # Lista raíz del workspace para verificar credenciales
           databricks workspace ls / >/dev/null
+          echo "✅ Conexión a Databricks verificada"
