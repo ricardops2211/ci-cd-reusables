@@ -4,21 +4,17 @@ on:
   workflow_call:
     inputs:
       databricks_host:
-        description: "URL del workspace de Databricks"
         required: true
         type: string
       vault_addr:
-        description: "Dirección de Vault"
         required: false
         type: string
         default: "http://127.0.0.1:8200"
       secret_path:
-        description: "Ruta del secreto en Vault"
         required: false
         type: string
         default: "secret/azure"
       field:
-        description: "Campo con el Databricks PAT"
         required: false
         type: string
         default: "DATABRICKS_TOKEN"
@@ -32,7 +28,6 @@ jobs:
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
     steps:
-      # Login en Vault y obtener token (SIN base64)
       - name: Obtener DATABRICKS_TOKEN desde Vault
         shell: bash
         env:
@@ -42,15 +37,12 @@ jobs:
         run: |
           set -Eeuo pipefail
           export PATH="$PATH:/home/gha-runner/vault"
-          vault --version
           vault login "$VAULT_TOKEN" >/dev/null
-          vault token lookup >/dev/null
           dbToken="$(vault kv get -field='${{ inputs.field }}' '${{ inputs.secret_path }}')"
           [ -n "$dbToken" ] || { echo "❌ Vault devolvió token vacío"; exit 1; }
           echo "::add-mask::$dbToken"
           echo "DATABRICKS_TOKEN=$dbToken" >> "$GITHUB_ENV"
 
-      # 🔹 Sanity check de conexión (tal cual tu step)
       - name: Validar conexión a Databricks
         shell: bash
         run: |
