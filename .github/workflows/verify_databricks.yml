@@ -4,28 +4,60 @@ on:
   workflow_call:
     inputs:
       databricks_host:
+        description: "URL del workspace de Databricks"
         required: true
         type: string
-      databricks_token:          # <-- token por input
-        required: true
+      vault_addr:
+        description: "Dirección de Vault"
+        required: false
         type: string
+        default: "http://127.0.0.1:8200"
+      secret_path:
+        description: "Ruta del secreto en Vault"
+        required: false
+        type: string
+        default: "secret/azure"
+      field:
+        description: "Campo con el Databricks PAT"
+        required: false
+        type: string
+        default: "DATABRICKS_TOKEN"
+    secrets:
+      VAULT_TOKEN:
+        required: true
 
 jobs:
   verify:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
-      DATABRICKS_TOKEN: ${{ inputs.databricks_token }}   # <-- usar input
     steps:
+      # Login en Vault y obtener token (SIN base64)
+      - name: Obtener DATABRICKS_TOKEN desde Vault
+        shell: bash
+        env:
+          VAULT_ADDR: ${{ inputs.vault_addr }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          VAULT_SKIP_VERIFY: "true"
+        run: |
+          set -Eeuo pipefail
+          export PATH="$PATH:/home/gha-runner/vault"
+          vault --version
+          vault login "$VAULT_TOKEN" >/dev/null
+          vault token lookup >/dev/null
+          dbToken="$(vault kv get -field='${{ inputs.field }}' '${{ inputs.secret_path }}')"
+          [ -n "$dbToken" ] || { echo "❌ Vault devolvió token vacío"; exit 1; }
+          echo "::add-mask::$dbToken"
+          echo "DATABRICKS_TOKEN=$dbToken" >> "$GITHUB_ENV"
+
+      # 🔹 Sanity check de conexión (tal cual tu step)
       - name: Validar conexión a Databricks
         shell: bash
         run: |
           set -Eeuo pipefail
-          # evita PATH vacío en env:
           export PATH="$PATH:$HOME/databricks-env/bin"
-          [ -n "$DATABRICKS_TOKEN" ] || { echo "❌ DATABRICKS_TOKEN vacío"; exit 1; }
-          echo "::add-mask::${DATABRICKS_TOKEN}"
           source "$HOME/databricks-env/bin/activate" 2>/dev/null || true
+          [ -n "$DATABRICKS_TOKEN" ] || { echo "❌ DATABRICKS_TOKEN vacío"; exit 1; }
           databricks --version
           databricks workspace ls / >/dev/null
           echo "✅ Conexión a Databricks verificada"
