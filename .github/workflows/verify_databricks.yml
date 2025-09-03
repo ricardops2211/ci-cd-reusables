@@ -7,7 +7,7 @@ on:
         description: "URL del workspace de Databricks"
         required: true
         type: string
-      databricks_token:               # <-- PASAR POR INPUT
+      databricks_token:               # <-- token por input
         description: "Databricks PAT"
         required: true
         type: string
@@ -17,7 +17,7 @@ jobs:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
-      DATABRICKS_TOKEN: ${{ inputs.databricks_token }}   # <-- USAR INPUT
+      DATABRICKS_TOKEN: ${{ inputs.databricks_token }}   # <-- usar input
     steps:
       - name: Validar conexión a Databricks
         shell: bash
