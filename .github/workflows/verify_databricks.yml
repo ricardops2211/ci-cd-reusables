@@ -3,27 +3,25 @@ name: verify-databricks
 on:
   workflow_call:
     inputs:
-      databricks_host:        { type: string, required: true }
-      notebooks_dir:          { type: string, default: "notebooks" }
-      data_dir:               { type: string, default: "data" }
-      raw_clientes:           { type: string, default: "data/raw/clientes.csv" }
-      raw_ventas:             { type: string, default: "data/raw/ventas.json" }
-      config_param_file:      { type: string, default: "data/config/parametros.yaml" }
-      jobs_dir:               { type: string, default: "jobs" }
-      python_scripts_dir:     { type: string, default: "scripts" }
-      outputs_dbfs:           { type: string, default: "dbfs:/FileStore/jobs_output/" }
-      artifact_name:          { type: string, default: "job-outputs" }
-      retention_days:         { type: number, default: 7 }
+      databricks_host:    { type: string,  required: true }
+      notebooks_dir:      { type: string,  default: "notebooks" }
+      data_dir:           { type: string,  default: "data" }
+      raw_clientes:       { type: string,  default: "data/raw/clientes.csv" }
+      raw_ventas:         { type: string,  default: "data/raw/ventas.json" }
+      config_param_file:  { type: string,  default: "data/config/parametros.yaml" }
+      jobs_dir:           { type: string,  default: "jobs" }
+      python_scripts_dir: { type: string,  default: "scripts" }
+      outputs_dbfs:       { type: string,  default: "dbfs:/FileStore/jobs_output/" }
+      artifact_name:      { type: string,  default: "job-outputs" }
+      retention_days:     { type: number,  default: 7 }
     secrets:
-      DATABRICKS_TOKEN:
-        required: true
+      DATABRICKS_TOKEN_B64: { required: true }
 
 jobs:
   verify:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,23 +32,38 @@ jobs:
             echo "$HOME/databricks-env/bin" >> "$GITHUB_PATH"
           fi
 
+      - name: Decodificar token y exportar a env
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          DBX_TOKEN="$(printf %s "${{ secrets.DATABRICKS_TOKEN_B64 }}" | base64 -d | base64 -d)"
+          if [ -z "$DBX_TOKEN" ]; then
+            echo "❌ DATABRICKS_TOKEN vacío tras decodificar"; exit 1
+          fi
+          echo "::add-mask::$DBX_TOKEN"
+          echo "DATABRICKS_TOKEN=$DBX_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Sanity check de token
+        shell: bash
+        run: |
+          test -n "$DATABRICKS_TOKEN" || { echo "❌ Token no presente"; exit 1; }
+
+      # Importar notebooks
       - name: Importar notebooks en Databricks
         shell: bash
         run: |
           set -Eeuo pipefail
           [ -f "$HOME/databricks-env/bin/activate" ] && source "$HOME/databricks-env/bin/activate"
-
           target_ws_dir="/Shared/notebook/py"
           databricks workspace mkdirs "$target_ws_dir"
-
           shopt -s nullglob
           for nb in "${{ inputs.notebooks_dir }}"/*.py; do
             base="$(basename "$nb")"
             echo "Importando $base en ${target_ws_dir}..."
-            databricks workspace import "$nb" "${target_ws_dir}/${base}" \
-              --language PYTHON --overwrite
+            databricks workspace import "$nb" "${target_ws_dir}/${base}" --language PYTHON --overwrite
           done
 
+      # Subir data/config a DBFS
       - name: Subir archivos de data y config a DBFS
         shell: bash
         run: |
@@ -89,7 +102,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           [ -f "$HOME/databricks-env/bin/activate" ] && source "$HOME/databricks-env/bin/activate"
-
           PARAM_FILE="dbfs:/FileStore/jobs_data/config/parametros.yaml"
           if databricks fs head "$PARAM_FILE" -n 1 >/dev/null 2>&1; then
             echo "✅ parametros.yaml existe en DBFS"
@@ -129,3 +141,5 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 "${{ inputs.python_scripts_dir }}/execute-jobdatabricks.py"
+
+
