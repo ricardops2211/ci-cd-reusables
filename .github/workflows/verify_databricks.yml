@@ -16,6 +16,7 @@ on:
       retention_days:     { type: number,  default: 7 }
     secrets:
       DATABRICKS_TOKEN_B64: { required: true }
+      # REUSABLES_TOKEN: { required: false }  # <-- solo si el repo reusable es privado
 
 jobs:
   verify:
@@ -23,7 +24,15 @@ jobs:
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4   # Esto clona el REPO DEL CALLER por defecto. :contentReference[oaicite:2]{index=2}
+
+      - name: Checkout del repo del reusable (para traer scripts)
+        uses: actions/checkout@v4
+        with:
+          repository: ricardops2211/ci-cd-reusables
+          ref: databricks
+          path: _reusables
+          # token: ${{ secrets.REUSABLES_TOKEN }}   # <-- descomenta si el repo reusable es PRIVADO
 
       - name: Añadir venv de Databricks al PATH (si existe)
         shell: bash
@@ -48,7 +57,47 @@ jobs:
         run: |
           test -n "$DATABRICKS_TOKEN" || { echo "❌ Token no presente"; exit 1; }
 
-      # Importar notebooks
+      - name: Resolver ruta de scripts (create/execute/joblist)
+        id: resolve_scripts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # 1) Intento directo con el input
+          CAND="${{ inputs.python_scripts_dir }}"
+          if [ -f "$CAND/create-jobdatabricks.py" ] && \
+             [ -f "$CAND/execute-jobdatabricks.py" ] && \
+             [ -f "$CAND/joblisttmp.py" ]; then
+            echo "CREATE_SCRIPT=$CAND/create-jobdatabricks.py" >> "$GITHUB_ENV"
+            echo "EXECUTE_SCRIPT=$CAND/execute-jobdatabricks.py" >> "$GITHUB_ENV"
+            echo "JOBLIST_SCRIPT=$CAND/joblisttmp.py"         >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          # 2) Fallback: scripts dentro del repo del reusable
+          if [ -f "_reusables/scripts/create-jobdatabricks.py" ] && \
+             [ -f "_reusables/scripts/execute-jobdatabricks.py" ] && \
+             [ -f "_reusables/scripts/joblisttmp.py" ]; then
+            echo "CREATE_SCRIPT=_reusables/scripts/create-jobdatabricks.py" >> "$GITHUB_ENV"
+            echo "EXECUTE_SCRIPT=_reusables/scripts/execute-jobdatabricks.py" >> "$GITHUB_ENV"
+            echo "JOBLIST_SCRIPT=_reusables/scripts/joblisttmp.py" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          # 3) Búsqueda global como último recurso
+          CREATE="$(find . -maxdepth 6 -type f -name create-jobdatabricks.py | head -n1 || true)"
+          EXECUTE="$(find . -maxdepth 6 -type f -name execute-jobdatabricks.py | head -n1 || true)"
+          JOBLIST="$(find . -maxdepth 6 -type f -name joblisttmp.py | head -n1 || true)"
+
+          if [ -n "$CREATE" ] && [ -n "$EXECUTE" ] && [ -n "$JOBLIST" ]; then
+            echo "CREATE_SCRIPT=$CREATE"   >> "$GITHUB_ENV"
+            echo "EXECUTE_SCRIPT=$EXECUTE" >> "$GITHUB_ENV"
+            echo "JOBLIST_SCRIPT=$JOBLIST" >> "$GITHUB_ENV"
+          else
+            echo "❌ No se encontraron scripts requeridos."
+            echo "Busqué en '${{ inputs.python_scripts_dir }}', en '_reusables/scripts' y en todo el repo."
+            exit 1
+          fi
+
       - name: Importar notebooks en Databricks
         shell: bash
         run: |
@@ -63,13 +112,11 @@ jobs:
             databricks workspace import "$nb" "${target_ws_dir}/${base}" --language PYTHON --overwrite
           done
 
-      # Subir data/config a DBFS
       - name: Subir archivos de data y config a DBFS
         shell: bash
         run: |
           set -Eeuo pipefail
           [ -f "$HOME/databricks-env/bin/activate" ] && source "$HOME/databricks-env/bin/activate"
-
           databricks fs mkdirs dbfs:/FileStore/data
           databricks fs mkdirs dbfs:/FileStore/jobs_data/raw
           databricks fs mkdirs dbfs:/FileStore/jobs_data/config
@@ -78,10 +125,8 @@ jobs:
           for p in "${{ inputs.data_dir }}"/*; do
             name="$(basename "$p")"
             if [ -d "$p" ]; then
-              echo "📤 Carpeta $name → DBFS:/FileStore/data/$name"
               databricks fs cp -r "$p" "dbfs:/FileStore/data/$name" --overwrite
             else
-              echo "📤 Archivo $name → DBFS:/FileStore/data/$name"
               databricks fs cp "$p" "dbfs:/FileStore/data/$name" --overwrite
             fi
           done
@@ -90,12 +135,18 @@ jobs:
           databricks fs cp "${{ inputs.raw_ventas }}"  dbfs:/FileStore/jobs_data/raw/ventas.json  --overwrite
           databricks fs cp "${{ inputs.config_param_file }}" dbfs:/FileStore/jobs_data/config/parametros.yaml --overwrite
 
-          echo "📂 Contenido de dbfs:/FileStore/data"
           databricks fs ls dbfs:/FileStore/data || true
-          echo "📂 Contenido de dbfs:/FileStore/jobs_data/raw"
           databricks fs ls dbfs:/FileStore/jobs_data/raw || true
-          echo "📂 Contenido de dbfs:/FileStore/jobs_data/config"
           databricks fs ls dbfs:/FileStore/jobs_data/config || true
+
+      - name: Verificar archivos subidos a DBFS
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [ -f "$HOME/databricks-env/bin/activate" ] && source "$HOME/databricks-env/bin/activate"
+          PARAM_FILE="dbfs:/FileStore/jobs_data/config/parametros.yaml"
+          databricks fs head "$PARAM_FILE" -n 1 >/dev/null 2>&1 || { echo "❌ parametros.yaml no está en DBFS"; exit 1; }
+          echo "✅ parametros.yaml existe en DBFS"
 
       - name: Crear/Actualizar Job(s) en Databricks (UPSERT)
         shell: bash
@@ -105,7 +156,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p .gha
-          python3 "${{ inputs.python_scripts_dir }}/create-jobdatabricks.py"
+          python3 "$CREATE_SCRIPT"
 
       - name: Actualizacion de joblist.tmp
         shell: bash
@@ -115,7 +166,7 @@ jobs:
           FILTER_REPO_ONLY: "true"
         run: |
           set -Eeuo pipefail
-          python3 "${{ inputs.python_scripts_dir }}/joblisttmp.py"
+          python3 "$JOBLIST_SCRIPT"
 
       - name: Ejecutar Job(s) y verificar
         shell: bash
@@ -127,33 +178,4 @@ jobs:
           LOGS_DBFS_BASE: "dbfs:/cluster-logs"
         run: |
           set -Eeuo pipefail
-          python3 "${{ inputs.python_scripts_dir }}/execute-jobdatabricks.py"
-
-      # 🔹 Paso 7: Descargar outputs desde DBFS
-      - name: Descargar outputs de DBFS
-        shell: bash
-        env:
-          PATH: ${{ env.PATH }}:~/databricks-env/bin
-        run: |
-          source ~/databricks-env/bin/activate
-
-          OUTPUT_DIR=outputs/
-          DBFS_DIR=dbfs:/FileStore/jobs_output/
-
-          # Crear directorio local con Python
-          python3 -c "import os; os.makedirs('$OUTPUT_DIR', exist_ok=True)"
-
-          echo "📥 Descargando resultados de $DBFS_DIR a $OUTPUT_DIR"
-          databricks fs cp -r "$DBFS_DIR" "$OUTPUT_DIR"
-          echo "✅ Outputs listos en $OUTPUT_DIR"
-
-          # Listar archivos usando Python
-          echo "📄 Listado de archivos en $OUTPUT_DIR:"
-          python3 -c "import os; [print(os.path.join(dp, f)) for dp, dn, filenames in os.walk('$OUTPUT_DIR') for f in filenames]"
-
-      - name: Subir outputs como artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: job-outputs
-          path: outputs/
-          retention-days: 7
+          python3 "$EXECUTE_SCRIPT"
