@@ -97,19 +97,6 @@ jobs:
           echo "📂 Contenido de dbfs:/FileStore/jobs_data/config"
           databricks fs ls dbfs:/FileStore/jobs_data/config || true
 
-      - name: Verificar archivos subidos a DBFS
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          [ -f "$HOME/databricks-env/bin/activate" ] && source "$HOME/databricks-env/bin/activate"
-          PARAM_FILE="dbfs:/FileStore/jobs_data/config/parametros.yaml"
-          if databricks fs head "$PARAM_FILE" -n 1 >/dev/null 2>&1; then
-            echo "✅ parametros.yaml existe en DBFS"
-          else
-            echo "❌ parametros.yaml NO existe en DBFS"
-            exit 1
-          fi
-
       - name: Crear/Actualizar Job(s) en Databricks (UPSERT)
         shell: bash
         env:
@@ -142,4 +129,31 @@ jobs:
           set -Eeuo pipefail
           python3 "${{ inputs.python_scripts_dir }}/execute-jobdatabricks.py"
 
+      # 🔹 Paso 7: Descargar outputs desde DBFS
+      - name: Descargar outputs de DBFS
+        shell: bash
+        env:
+          PATH: ${{ env.PATH }}:~/databricks-env/bin
+        run: |
+          source ~/databricks-env/bin/activate
 
+          OUTPUT_DIR=outputs/
+          DBFS_DIR=dbfs:/FileStore/jobs_output/
+
+          # Crear directorio local con Python
+          python3 -c "import os; os.makedirs('$OUTPUT_DIR', exist_ok=True)"
+
+          echo "📥 Descargando resultados de $DBFS_DIR a $OUTPUT_DIR"
+          databricks fs cp -r "$DBFS_DIR" "$OUTPUT_DIR"
+          echo "✅ Outputs listos en $OUTPUT_DIR"
+
+          # Listar archivos usando Python
+          echo "📄 Listado de archivos en $OUTPUT_DIR:"
+          python3 -c "import os; [print(os.path.join(dp, f)) for dp, dn, filenames in os.walk('$OUTPUT_DIR') for f in filenames]"
+
+      - name: Subir outputs como artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-outputs
+          path: outputs/
+          retention-days: 7
