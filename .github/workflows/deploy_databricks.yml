@@ -1,4 +1,4 @@
-name: verify-databricks
+name: deploy-databricks
 
 on:
   workflow_call:
@@ -6,42 +6,12 @@ on:
       databricks_host:
         type: string
         required: true
-      notebooks_dir:
-        type: string
-        default: "notebooks"
-      data_dir:
-        type: string
-        default: "data"
-      raw_clientes:
-        type: string
-        default: "data/raw/clientes.csv"
-      raw_ventas:
-        type: string
-        default: "data/raw/ventas.json"
-      config_param_file:
-        type: string
-        default: "data/config/parametros.yaml"
-      jobs_dir:
-        type: string
-        default: "jobs"
-      python_scripts_dir:
-        type: string
-        default: "scripts"
-      outputs_dbfs:
-        type: string
-        default: "dbfs:/FileStore/jobs_output/"
-      artifact_name:
-        type: string
-        default: "job-outputs"
-      retention_days:
-        type: number
-        default: 7
     secrets:
       DATABRICKS_TOKEN:
         required: true
 
 jobs:
-  verify:
+  deploy:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
@@ -56,104 +26,10 @@ jobs:
             echo "$HOME/databricks-env/bin" >> "$GITHUB_PATH"
           fi
 
-      # Importar notebooks
-      - name: Importar notebooks en Databricks
+      - name: Validar conexión a Databricks
         shell: bash
         run: |
           set -Eeuo pipefail
           [ -f "$HOME/databricks-env/bin/activate" ] && source "$HOME/databricks-env/bin/activate"
-
-          target_ws_dir="/Shared/notebook/py"
-          databricks workspace mkdirs "$target_ws_dir"
-
-          shopt -s nullglob
-          for nb in "${{ inputs.notebooks_dir }}"/*.py; do
-            base="$(basename "$nb")"
-            echo "Importando $base en ${target_ws_dir}..."
-            databricks workspace import "$nb" "${target_ws_dir}/${base}" \
-              --language PYTHON --overwrite
-          done
-
-      # Subir data/config a DBFS
-      - name: Subir archivos de data y config a DBFS
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          [ -f "$HOME/databricks-env/bin/activate" ] && source "$HOME/databricks-env/bin/activate"
-
-          databricks fs mkdirs dbfs:/FileStore/data
-          databricks fs mkdirs dbfs:/FileStore/jobs_data/raw
-          databricks fs mkdirs dbfs:/FileStore/jobs_data/config
-
-          shopt -s nullglob
-          for p in "${{ inputs.data_dir }}"/*; do
-            name="$(basename "$p")"
-            if [ -d "$p" ]; then
-              echo "📤 Carpeta $name → DBFS:/FileStore/data/$name"
-              databricks fs cp -r "$p" "dbfs:/FileStore/data/$name" --overwrite
-            else
-              echo "📤 Archivo $name → DBFS:/FileStore/data/$name"
-              databricks fs cp "$p" "dbfs:/FileStore/data/$name" --overwrite
-            fi
-          done
-
-          databricks fs cp "${{ inputs.raw_clientes }}" dbfs:/FileStore/jobs_data/raw/clientes.csv --overwrite
-          databricks fs cp "${{ inputs.raw_ventas }}"  dbfs:/FileStore/jobs_data/raw/ventas.json  --overwrite
-          databricks fs cp "${{ inputs.config_param_file }}" dbfs:/FileStore/jobs_data/config/parametros.yaml --overwrite
-
-          echo "📂 Contenido de dbfs:/FileStore/data"
-          databricks fs ls dbfs:/FileStore/data || true
-          echo "📂 Contenido de dbfs:/FileStore/jobs_data/raw"
-          databricks fs ls dbfs:/FileStore/jobs_data/raw || true
-          echo "📂 Contenido de dbfs:/FileStore/jobs_data/config"
-          databricks fs ls dbfs:/FileStore/jobs_data/config || true
-
-      # Verificar archivos
-      - name: Verificar archivos subidos a DBFS
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          [ -f "$HOME/databricks-env/bin/activate" ] && source "$HOME/databricks-env/bin/activate"
-
-          PARAM_FILE="dbfs:/FileStore/jobs_data/config/parametros.yaml"
-          if databricks fs head "$PARAM_FILE" -n 1 >/dev/null 2>&1; then
-            echo "✅ parametros.yaml existe en DBFS"
-          else
-            echo "❌ parametros.yaml NO existe en DBFS"
-            exit 1
-          fi
-
-      # Crear/Actualizar Job(s)
-      - name: Crear/Actualizar Job(s) en Databricks (UPSERT)
-        shell: bash
-        env:
-          JOBS_DIR: ${{ inputs.jobs_dir }}
-          JOB_IDS_PATH: .gha/job_ids.json
-        run: |
-          set -Eeuo pipefail
-          mkdir -p .gha
-          python3 "${{ inputs.python_scripts_dir }}/create-jobdatabricks.py"
-
-      # Actualizar joblist.tmp
-      - name: Actualizacion de joblist.tmp
-        shell: bash
-        env:
-          WRITE_MAPPING: "false"
-          WRITE_FULL_MAPPING: "true"
-          FILTER_REPO_ONLY: "true"
-        run: |
-          set -Eeuo pipefail
-          python3 "${{ inputs.python_scripts_dir }}/joblisttmp.py"
-
-      # Ejecutar Job(s) y monitorear
-      - name: Ejecutar Job(s) y verificar
-        shell: bash
-        env:
-          JOB_IDS_PATH: .gha/job_ids.json
-          POLL_SECONDS: "10"
-          TAIL_INTERVAL: "10"
-          TIMEOUT_SECONDS: "7200"
-          LOGS_DBFS_BASE: "dbfs:/cluster-logs"
-        run: |
-          set -Eeuo pipefail
-          python3 "${{ inputs.python_scripts_dir }}/execute-jobdatabricks.py"
+          databricks --version
+          databricks workspace ls / >/dev/null
