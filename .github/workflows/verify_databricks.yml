@@ -1,25 +1,53 @@
-name: verify_databricks
+name: verify-databricks
 
 on:
   workflow_call:
     inputs:
       databricks_host:
+        type: string
         required: true
+      notebooks_dir:
         type: string
-      vault_addr:
         required: false
+        default: "notebooks"
+      data_dir:
         type: string
-        default: "http://127.0.0.1:8200"
-      secret_path:
         required: false
+        default: "data"
+      raw_clientes:
         type: string
-        default: "secret/azure"
-      field:
         required: false
+        default: "data/raw/clientes.csv"
+      raw_ventas:
         type: string
-        default: "DATABRICKS_TOKEN"
+        required: false
+        default: "data/raw/ventas.json"
+      config_param_file:
+        type: string
+        required: false
+        default: "data/config/parametros.yaml"
+      jobs_dir:
+        type: string
+        required: false
+        default: "jobs"
+      python_scripts_dir:
+        type: string
+        required: false
+        default: "scripts"
+      outputs_dbfs:
+        type: string
+        required: false
+        default: "dbfs:/FileStore/jobs_output/"
+      artifact_name:
+        type: string
+        required: false
+        default: "job-outputs"
+      retention_days:
+        type: number
+        required: false
+        default: 7
     secrets:
-      VAULT_TOKEN:
+      DATABRICKS_TOKEN:
         required: true
 
 jobs:
@@ -27,29 +55,113 @@ jobs:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      PATH: ${{ env.PATH }}:~/databricks-env/bin
     steps:
-      - name: Obtener DATABRICKS_TOKEN desde Vault
+      - uses: actions/checkout@v4
+
+      # Importar notebooks
+      - name: Importar notebooks en Databricks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source ~/databricks-env/bin/activate || true
+
+          target_ws_dir="/Shared/notebook/py"
+          databricks workspace mkdirs "$target_ws_dir"
+
+          shopt -s nullglob
+          for nb in "${{ inputs.notebooks_dir }}"/*.py; do
+            base="$(basename "$nb")"
+            echo "Importando $base en ${target_ws_dir}..."
+            databricks workspace import "$nb" "${target_ws_dir}/${base}" \
+              --language PYTHON --overwrite
+          done
+
+      # Subir data/config a DBFS
+      - name: Subir archivos de data y config a DBFS
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source ~/databricks-env/bin/activate || true
+
+          databricks fs mkdirs dbfs:/FileStore/data
+          databricks fs mkdirs dbfs:/FileStore/jobs_data/raw
+          databricks fs mkdirs dbfs:/FileStore/jobs_data/config
+
+          # Copiar todo lo de data/ (archivos y carpetas)
+          shopt -s nullglob
+          for p in "${{ inputs.data_dir }}"/*; do
+            name="$(basename "$p")"
+            if [ -d "$p" ]; then
+              echo "📤 Carpeta $name → DBFS:/FileStore/data/$name"
+              databricks fs cp -r "$p" "dbfs:/FileStore/data/$name" --overwrite
+            else
+              echo "📤 Archivo $name → DBFS:/FileStore/data/$name"
+              databricks fs cp "$p" "dbfs:/FileStore/data/$name" --overwrite
+            fi
+          done
+
+          # Copia específica a raw/
+          databricks fs cp "${{ inputs.raw_clientes }}" dbfs:/FileStore/jobs_data/raw/clientes.csv --overwrite
+          databricks fs cp "${{ inputs.raw_ventas }}"  dbfs:/FileStore/jobs_data/raw/ventas.json  --overwrite
+
+          # Parametrización
+          databricks fs cp "${{ inputs.config_param_file }}" dbfs:/FileStore/jobs_data/config/parametros.yaml --overwrite
+
+          echo "📂 Contenido de dbfs:/FileStore/data"
+          databricks fs ls dbfs:/FileStore/data || true
+          echo "📂 Contenido de dbfs:/FileStore/jobs_data/raw"
+          databricks fs ls dbfs:/FileStore/jobs_data/raw || true
+          echo "📂 Contenido de dbfs:/FileStore/jobs_data/config"
+          databricks fs ls dbfs:/FileStore/jobs_data/config || true
+
+      # Verificar archivos
+      - name: Verificar archivos subidos a DBFS
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          source ~/databricks-env/bin/activate || true
+
+          PARAM_FILE="dbfs:/FileStore/jobs_data/config/parametros.yaml"
+          if databricks fs head "$PARAM_FILE" -n 1 >/dev/null 2>&1; then
+            echo "✅ parametros.yaml existe en DBFS"
+          else
+            echo "❌ parametros.yaml NO existe en DBFS"
+            exit 1
+          fi
+
+      # Crear/Actualizar Job(s)
+      - name: Crear/Actualizar Job(s) en Databricks (UPSERT)
         shell: bash
         env:
-          VAULT_ADDR: ${{ inputs.vault_addr }}
-          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
-          VAULT_SKIP_VERIFY: "true"
+          JOBS_DIR: ${{ inputs.jobs_dir }}
+          JOB_IDS_PATH: .gha/job_ids.json
         run: |
           set -Eeuo pipefail
-          export PATH="$PATH:/home/gha-runner/vault"
-          vault login "$VAULT_TOKEN" >/dev/null
-          dbToken="$(vault kv get -field='${{ inputs.field }}' '${{ inputs.secret_path }}')"
-          [ -n "$dbToken" ] || { echo "❌ Vault devolvió token vacío"; exit 1; }
-          echo "::add-mask::$dbToken"
-          echo "DATABRICKS_TOKEN=$dbToken" >> "$GITHUB_ENV"
+          mkdir -p .gha
+          python3 "${{ inputs.python_scripts_dir }}/create-jobdatabricks.py"
 
-      - name: Validar conexión a Databricks
+      # Actualizar joblist.tmp
+      - name: Actualizacion de joblist.tmp
         shell: bash
+        env:
+          WRITE_MAPPING: "false"
+          WRITE_FULL_MAPPING: "true"
+          FILTER_REPO_ONLY: "true"
         run: |
           set -Eeuo pipefail
-          export PATH="$PATH:$HOME/databricks-env/bin"
-          source "$HOME/databricks-env/bin/activate" 2>/dev/null || true
-          [ -n "$DATABRICKS_TOKEN" ] || { echo "❌ DATABRICKS_TOKEN vacío"; exit 1; }
-          databricks --version
-          databricks workspace ls / >/dev/null
-          echo "✅ Conexión a Databricks verificada"
+          python3 "${{ inputs.python_scripts_dir }}/joblisttmp.py"
+
+      # Ejecutar Job(s) y monitorear
+      - name: Ejecutar Job(s) y verificar
+        shell: bash
+        env:
+          JOB_IDS_PATH: .gha/job_ids.json
+          POLL_SECONDS: "10"
+          TAIL_INTERVAL: "10"
+          TIMEOUT_SECONDS: "7200"
+          LOGS_DBFS_BASE: "dbfs:/cluster-logs"
+        run: |
+          set -Eeuo pipefail
+          python3 "${{ inputs.python_scripts_dir }}/execute-jobdatabricks.py"
