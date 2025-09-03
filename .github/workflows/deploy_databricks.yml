@@ -3,19 +3,16 @@ name: deploy-databricks
 on:
   workflow_call:
     inputs:
-      databricks_host:
-        type: string
-        required: true
+      databricks_host: { type: string, required: true }
     secrets:
-      DATABRICKS_TOKEN:
-        required: true
+      # Recibimos el token doble-base64
+      DATABRICKS_TOKEN_B64: { required: true }
 
 jobs:
   deploy:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +22,23 @@ jobs:
           if [ -d "$HOME/databricks-env/bin" ]; then
             echo "$HOME/databricks-env/bin" >> "$GITHUB_PATH"
           fi
+
+      - name: Decodificar token y exportar a env
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # Decodificar doble-base64 → variable de entorno
+          DBX_TOKEN="$(printf %s "${{ secrets.DATABRICKS_TOKEN_B64 }}" | base64 -d | base64 -d)"
+          if [ -z "$DBX_TOKEN" ]; then
+            echo "❌ DATABRICKS_TOKEN vacío tras decodificar"; exit 1
+          fi
+          echo "::add-mask::$DBX_TOKEN"
+          echo "DATABRICKS_TOKEN=$DBX_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Sanity check de token
+        shell: bash
+        run: |
+          test -n "$DATABRICKS_TOKEN" || { echo "❌ Token no presente"; exit 1; }
 
       - name: Validar conexión a Databricks
         shell: bash
