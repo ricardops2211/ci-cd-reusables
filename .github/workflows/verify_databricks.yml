@@ -4,9 +4,11 @@ on:
   workflow_call:
     inputs:
       databricks_host:
+        description: "URL del workspace de Databricks"
         required: true
         type: string
-      databricks_token:            # ⬅️ NUEVO
+      databricks_token:               # <-- PASAR POR INPUT
+        description: "Databricks PAT"
         required: true
         type: string
 
@@ -15,7 +17,7 @@ jobs:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
-      DATABRICKS_TOKEN: ${{ inputs.databricks_token }}   # ⬅️ usar input
+      DATABRICKS_TOKEN: ${{ inputs.databricks_token }}   # <-- USAR INPUT
     steps:
       - name: Validar conexión a Databricks
         shell: bash
@@ -29,4 +31,3 @@ jobs:
           databricks --version
           databricks workspace ls / >/dev/null
           echo "✅ Conexión a Databricks verificada"
-
