@@ -7,7 +7,7 @@ on:
         description: "URL del workspace de Databricks"
         required: true
         type: string
-      databricks_token:               # <-- token por input
+      databricks_token:                # <-- TOKEN POR INPUT
         description: "Databricks PAT"
         required: true
         type: string
@@ -17,17 +17,23 @@ jobs:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
-      DATABRICKS_TOKEN: ${{ inputs.databricks_token }}   # <-- usar input
+      DATABRICKS_TOKEN: ${{ inputs.databricks_token }}  # <-- USAR INPUT
     steps:
       - name: Validar conexión a Databricks
         shell: bash
-        env:
-          PATH: ${{ env.PATH }}:~/databricks-env/bin
         run: |
-          source ~/databricks-env/bin/activate || true
           set -Eeuo pipefail
+          # Evita depender de env.PATH en 'env:' que suele quedar vacío en reusables
+          export PATH="$PATH:$HOME/databricks-env/bin"
+
+          # Guardias y mascara
           [ -n "$DATABRICKS_TOKEN" ] || { echo "❌ DATABRICKS_TOKEN vacío"; exit 1; }
           echo "::add-mask::${DATABRICKS_TOKEN}"
+          echo "🔐 Longitud del token: ${#DATABRICKS_TOKEN} caracteres"
+
+          # (opcional) activar venv si existe
+          source "$HOME/databricks-env/bin/activate" 2>/dev/null || true
+
           databricks --version
           databricks workspace ls / >/dev/null
           echo "✅ Conexión a Databricks verificada"
