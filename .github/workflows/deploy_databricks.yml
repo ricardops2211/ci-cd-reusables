@@ -7,6 +7,10 @@ on:
         description: "URL del workspace de Databricks"
         required: true
         type: string
+      databricks_token:               # <-- token por input
+        description: "Databricks PAT"
+        required: true
+        type: string
       logs_dbfs_base:
         description: "Destino de logs del driver"
         required: false
@@ -17,16 +21,13 @@ on:
         required: false
         type: string
         default: ".gha/job_ids.json"
-    secrets:
-      DATABRICKS_TOKEN:
-        required: true
 
 jobs:
   databricks-ejecucion:
     runs-on: self-hosted
     env:
       DATABRICKS_HOST: ${{ inputs.databricks_host }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_TOKEN: ${{ inputs.databricks_token }} 
 
     steps:
       # 🔹 Paso 0: Checkout del repo
