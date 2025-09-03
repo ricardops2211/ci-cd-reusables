@@ -139,15 +139,6 @@ jobs:
           databricks fs ls dbfs:/FileStore/jobs_data/raw || true
           databricks fs ls dbfs:/FileStore/jobs_data/config || true
 
-      - name: Verificar archivos subidos a DBFS
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          [ -f "$HOME/databricks-env/bin/activate" ] && source "$HOME/databricks-env/bin/activate"
-          PARAM_FILE="dbfs:/FileStore/jobs_data/config/parametros.yaml"
-          databricks fs head "$PARAM_FILE" -n 1 >/dev/null 2>&1 || { echo "❌ parametros.yaml no está en DBFS"; exit 1; }
-          echo "✅ parametros.yaml existe en DBFS"
-
       - name: Crear/Actualizar Job(s) en Databricks (UPSERT)
         shell: bash
         env:
