@@ -139,7 +139,7 @@ jobs:
           databricks fs ls dbfs:/FileStore/jobs_data/raw || true
           databricks fs ls dbfs:/FileStore/jobs_data/config || true
 
-      - name: Crear/Actualizar Job(s) en Databricks (UPSERT)
+      - name: Crear o actualizar jobsworkflows en Databricks
         shell: bash
         env:
           JOBS_DIR: ${{ inputs.jobs_dir }}

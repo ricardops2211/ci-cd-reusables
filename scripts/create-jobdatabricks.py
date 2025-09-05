@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# scripts/databricks_upsert_jobs.py
 import os, sys, json, glob, urllib.request, urllib.error, urllib.parse
 
 HOST = (os.getenv("DATABRICKS_HOST") or "").rstrip("/")

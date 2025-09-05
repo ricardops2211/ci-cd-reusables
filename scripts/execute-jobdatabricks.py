@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import os, sys, time, json, base64, urllib.request, urllib.parse, urllib.error
 
 HOST = (os.getenv("DATABRICKS_HOST") or "").rstrip("/")

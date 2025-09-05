@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-# scripts/joblist_build_and_show.py
-#
-# 1) Llama /api/2.1/jobs/list con paginación
-# 2) Guarda "raw" en joblist.tmp (RUNNER_TEMP)
-# 3) Muestra preview (limitado) en consola
-# 4) (Opcional) .gha/job_ids.full.json con TODOS (solo auditoría)
-# 5) NO toca .gha/job_ids.json a menos que WRITE_MAPPING=true
-# 6) Limpia el tmp (a menos que KEEP_JOBLIST=true)
-
 import os, sys, json, glob, re, tempfile, urllib.request, urllib.parse, urllib.error
 
 HOST = (os.getenv("DATABRICKS_HOST") or "").rstrip("/")
